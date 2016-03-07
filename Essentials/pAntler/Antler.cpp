@@ -28,144 +28,9 @@ CAntler::CAntler()
 //this is the vanilla version of Run - called to run from a single mission file
 bool CAntler::Run(const std::string &  sMissionFile,std::set<std::string> Filter )
 {
-    m_bHeadless = false;
     m_sMissionFile = sMissionFile;
     m_Filter = Filter;
     return Spawn(m_sMissionFile);
-}
-
-//this version will wait for a mission fiel to be sent via a DB
-bool CAntler::Run(const std::string & sHost,  int nPort, const std::string & sAntlerName)
-{
-    //this is more interesting...
-    m_sAntlerName = sAntlerName;
-    m_sDBHost = sHost;
-    m_nDBPort = nPort;
-    m_bHeadless = true;
-    
-    
-    if(!ConfigureMOOSComms())
-        return true;
-        
-    
-    MOOSTrace("   This is headless Antler called \"%s\"\n   Waiting for mission file from %s:%d\n",m_sAntlerName.c_str(),m_sDBHost.c_str(),m_nDBPort);
-    
-       
-	const char * sSpin = "-\\|/";
-    while(1)
-    {
-        //wait to be signalled that there is work to do...
-        int i = 0;
-        while(!m_bNewJob)
-        {
-            MOOSPause(500);
-            MOOSTrace("   Speak to me Monarch....%c\r",sSpin[i++%3]);
-        }
-            
-        //no more launching until this community is complete
-        m_JobLock.Lock();
-        Spawn(m_sReceivedMissionFile,true);
-        m_bNewJob = false;
-        m_JobLock.UnLock();
-        
-    }
-}
-
-
-
-bool CAntler::DoRemoteControl()
-{
-    
-    
-	    
-    while(1)
-    {
-        MOOSPause(100);
-        if(!m_pMOOSComms->IsConnected())
-            continue;
-        
-        //better check mail
-        MOOSMSG_LIST NewMail;
-        if(m_pMOOSComms->Fetch(NewMail))
-        {
-            CMOOSMsg Msg;
-            if(m_bHeadless)
-            {
-                
-                if(m_pMOOSComms->PeekMail(NewMail,"MISSION_FILE",Msg))
-                {
-                    MOOSTrace("\n|***** Dynamic Brief *****|\n\n");
-                    
-                    //make a new file name
-                    m_sReceivedMissionFile = MOOSFormat("runtime_%s.moos",MOOSGetTimeStampString().c_str());   
-                    
-                    MOOSTrace("   %s received [%d bytes]\n",m_sReceivedMissionFile.c_str(),Msg.GetString().size());
-                    MOOSTrace("   shutting down all current spawned processes:\n");
-                    
-                    //tell the current job to quit
-                    m_bQuitCurrentJob = true;
-                    
-                    //wait for that to happen
-                    m_JobLock.Lock();        
-                    
-                    //here we copy the mission file contained in the message to 
-                    std::stringstream ss(Msg.GetString());
-                    
-                    //suck out the Antler filter line
-                    std::string sFilter;
-                    std::getline(ss, sFilter);
-					MOOSTrace("%s\n", sFilter.c_str());
-                    MOOSChomp(sFilter,"ANTLERFILTER:", true);
-                    std::stringstream ssF(sFilter);
-                    
-                    //fill in the filter set
-                    std::copy(istream_iterator<std::string>(ssF), 
-                              istream_iterator<string>(),
-                              std::inserter(m_Filter,m_Filter.begin()));
-                    
-                    
-                    //write out the whole file
-                    std::ofstream Out(m_sReceivedMissionFile.c_str());
-                    if(!Out.is_open())
-                    {
-                        m_JobLock.UnLock();
-                        return MOOSFail("failed to open mission file for writing");
-                    }
-                    
-                    //you've gotta lurve C++ ...
-                    Out<<ss.rdbuf();
-                    
-                    Out.close();
-                    
-                    //we no longer want the current job to quit (it already has)
-                    m_bQuitCurrentJob = false;
-                    
-                    //signal that we have more work to do
-                    m_bNewJob =true;
-                    
-                    //let thread 0 continue
-                    m_JobLock.UnLock();
-                    
-                    
-                }
-            }
-            else
-            {
-                if(m_pMOOSComms->PeekAndCheckMail(NewMail, "ANTLER_STATUS", Msg))
-                {
-                    std::string sWhat;
-                    MOOSValFromString(sWhat, Msg.GetString(),"Action");
-                    std::string sProc;
-                    MOOSValFromString(sProc, Msg.GetString(),"Process");
-                    std::string sID;
-                    MOOSValFromString(sID, Msg.GetString(), "AntlerID");
-                    
-                    MOOSTrace("   [rmt] Process %-15s has %s (by %s)\n",sProc.c_str(),sWhat.c_str(),sID.c_str());
-                }    
-            }
-            
-        }
-    }        
 }
 
 bool CAntler::SetVerbosity(VERBOSITY_LEVEL eLevel)
@@ -189,14 +54,6 @@ bool CAntler::SetVerbosity(VERBOSITY_LEVEL eLevel)
 
 bool CAntler::ConfigureMOOSComms()
 {
-    
-	
-    
-    //start a monitoring thread
-    m_RemoteControlThread.Initialise(_RemoteControlCB, this);
-    m_RemoteControlThread.Start();
-    
-    
     m_pMOOSComms = new CMOOSCommClient;
     m_pMOOSComms->SetOnConnectCallBack(_MOOSConnectCB,this);
 	m_pMOOSComms->SetOnDisconnectCallBack(_MOOSDisconnectCB,this);
@@ -211,8 +68,6 @@ bool CAntler::ConfigureMOOSComms()
       
     return true;
 }
-
-
 
 bool CAntler::SendMissionFile( )
 {
@@ -240,62 +95,31 @@ bool CAntler::SendMissionFile( )
 }
 bool CAntler::OnMOOSConnect()
 {
-    if(m_bHeadless)
-    {
-        MOOSTrace("  Connecting to a DB\n");    
-        m_pMOOSComms->Register("MISSION_FILE",0);
-      
-    }
-    else
-    {
-        m_pMOOSComms->Register("ANTLER_STATUS",0);
-        SendMissionFile();
-    }
+//    m_pMOOSComms->Register("ANTLER_STATUS",0);
+    SendMissionFile();
     return true;
 }
+
 bool CAntler::OnMOOSDisconnect()
 {
-    if(m_bHeadless)
-    {
-        
-        MOOSTrace("   DB Connection Lost\n");    
-        
-        if(m_bKillOnDBDisconnect)
-        {
-            //look likes the monarch is dead.....
-            MOOSTrace("   shutting down all current spawned processes:\n");
-            
-            //tell the current job to quit
-            m_bQuitCurrentJob = true;
-            
-            //wait for that to happen
-            m_JobLock.Lock();        
-            m_JobLock.UnLock();        
-        }
-       
-    }
     return true;
 }
 
 bool CAntler::PublishProcessQuit(const std::string & sProc)
 {
-	if(!m_bHeadless)
-        return false;
-    
     if(!m_pMOOSComms->IsConnected())
         return false;
 
     m_pMOOSComms->Notify("ANTLER_STATUS",MOOSFormat("Action=Quit,Process=%s,AntlerID=%s",sProc.c_str(),m_sAntlerName.c_str()));
-    
     
     return true;
 }
 
 bool CAntler::PublishProcessLaunch(const std::string & sProc)
 {
-	if(!m_bHeadless)
+    if (!m_pMOOSComms)
         return false;
-    
+
     if(!m_pMOOSComms->IsConnected())
         return false;
     
@@ -426,6 +250,7 @@ bool CAntler::Spawn(const std::string &  sMissionFile, bool bHeadless)
     for(p = sParams.begin();p!=sParams.end();p++)
     {
         std::string sLine = *p;
+        std::cout << sLine << std::endl;
         
         std::string sWhat = MOOSChomp(sLine,"=");
         
@@ -450,6 +275,7 @@ bool CAntler::Spawn(const std::string &  sMissionFile, bool bHeadless)
 				
                 m_ProcList.push_front(pNew);
 				m_nCurrentLaunch++;
+
                 PublishProcessLaunch(pNew->m_sApp);
             }
             
@@ -458,30 +284,16 @@ bool CAntler::Spawn(const std::string &  sMissionFile, bool bHeadless)
             
         }
     }
+
+    std::cout << "Launch complete" << std::endl;
+
     
-    
-    
-    if(bHeadless==false)
-    {
-        bool bMaster=false;
-        m_MissionReader.GetConfigurationParam("EnableDistributed",bMaster);
-        if(bMaster)
-        {
-            
-            m_MissionReader.GetValue("ServerHost",m_sDBHost);
-            m_MissionReader.GetValue("ServerPort",m_nDBPort);
-            
-            
-            if(!ConfigureMOOSComms())
-                return MOOSFail("failed to start MOOS comms");
-            
-        }
-    }
-    else
-    {
-        m_bKillOnDBDisconnect = true;
-        m_MissionReader.GetConfigurationParam("KillOnDBDisconnect",m_bKillOnDBDisconnect);
-    }
+    m_MissionReader.GetValue("ServerHost",m_sDBHost);
+    m_MissionReader.GetValue("ServerPort",m_nDBPort);
+
+
+    if(!ConfigureMOOSComms())
+        return MOOSFail("failed to start MOOS comms");
     
 
     
@@ -494,6 +306,8 @@ bool CAntler::Spawn(const std::string &  sMissionFile, bool bHeadless)
         {
             MOOSProc * pMOOSProc = *q;
             
+            std::cout << pMOOSProc->m_sApp << std::endl;
+
 #ifdef _WIN32
             if(m_bQuitCurrentJob)
             {
@@ -680,43 +494,6 @@ CAntler::MOOSProc* CAntler::CreateMOOSProcess(string sConfiguration)
     
 	//look for tilde demarking end of param=val block
     string sOption = MOOSChomp(sParam,"~");
-    
-    
-    
-    bool bDistributed=false;
-    m_MissionReader.GetConfigurationParam("EnableDistributed",bDistributed);
-
-    if(bDistributed)
-    {
-               
-        
-        if(m_bHeadless)
-        {
-            //we are a drone
-            std::string sAntlerRequired;
-            if(!MOOSValFromString(sAntlerRequired, sOption, "AntlerID", true))
-                return NULL; //this is for primary Antler
-            
-                        
-            if(!MOOSStrCmp(sAntlerRequired, m_sAntlerName))
-                return NULL; //for some other Antler
-            
-            //OK it is for us...
-            //MOOSTrace("Headless Antler found a RUN directive...\n");
-        }
-        else
-        {
-            //we are a TopMOOS
-            std::string sAntlerRequired;
-            if(MOOSValFromString(sAntlerRequired, sOption, "AntlerID", true))
-                return NULL; //this is for a drone
-            
-        }
-    }
-    else
-    {
-        //we run everything
-    }
     
     //do we want a new console?
     bool bNewConsole = false;

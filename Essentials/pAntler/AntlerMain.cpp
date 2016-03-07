@@ -171,14 +171,6 @@ int main(int argc ,char *argv[])
                        
             return gAntler.Run(sMissionFile,Filter);
         }
-        case 4:
-        {            
-            //headless MOOS - driven my another Antler somewhere else
-            std::string sDBHost = vArgv[1]; //where is DB?
-            int nPort = atoi(vArgv[2].c_str()); //what port
-            std::string sName = vArgv[3]; //what is our Antler name?
-            return gAntler.Run(sDBHost,nPort,sName) ? 0 :-1;
-        }
         default:
         {
             MOOSTrace("usage:\n pAntler missionfile.moos\nor\n pAntler missionfile.moos \"P1,P2,P3...\"\nor pAntler DBHost DBPort AntlerName\n");

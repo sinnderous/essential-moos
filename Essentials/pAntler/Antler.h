@@ -64,9 +64,6 @@ class CAntler
         CAntler();
         //this is the only public function. Call it to have Antler do its thing.
         bool Run(const std::string & sMissionFile,std::set<std::string> Filter = std::set<std::string>() );
-        
-        //run in a headless fashion - instructions will be recieved via MOOSComms
-        bool Run(const std::string & sHost,  int lPort, const std::string & sAntlerName);
 		
 		enum VERBOSITY_LEVEL
 		{
@@ -119,14 +116,7 @@ class CAntler
         
         //this is used to communicate with the BD and ultimately other instantiations of
         //pAntler on different machines...
-        CMOOSThread m_RemoteControlThread;
         CMOOSCommClient * m_pMOOSComms;
-        /**method to allow Listen thread to be launched with a MOOSThread.*/
-        static bool _RemoteControlCB(void* pParam)
-        {
-            CAntler* pMe = (CAntler*) pParam;
-            return pMe->DoRemoteControl();
-        }
 		/** internal MOOS client callbacks*/
         static bool _MOOSConnectCB(void *pParam)
         {
@@ -150,7 +140,6 @@ class CAntler
         
         CMOOSLock m_JobLock;
         std::string m_sMissionFile;
-        bool m_bHeadless;
         bool m_bQuitCurrentJob;
 		bool m_bSupportGentleKill;
         bool m_bRunning;
